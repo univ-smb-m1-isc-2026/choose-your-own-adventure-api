@@ -1,0 +1,17 @@
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/cyoa}
+    username: ${DB_USERNAME:cyoa_user}
+    password: ${DB_PASSWORD:cyoa_password}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  security:
+    user:
+      name: admin
+      password: password
+server:
+  port: 8080
