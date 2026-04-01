@@ -1,8 +1,8 @@
 spring:
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/cyoa}
-    username: ${SPRING_DATASOURCE_USERNAME:cyoa_user}
-    password: ${SPRING_DATASOURCE_PASSWORD:cyoa_password}
+    url: ${SPRING_DATASOURCE_URL:${DB_URL:jdbc:postgresql://localhost:5432/cyoa}}
+    username: ${SPRING_DATASOURCE_USERNAME:${DB_USERNAME:cyoa_user}}
+    password: ${SPRING_DATASOURCE_PASSWORD:${DB_PASSWORD:cyoa_password}}
   jpa:
     hibernate:
       ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:update}
