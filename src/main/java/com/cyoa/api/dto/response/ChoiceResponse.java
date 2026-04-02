@@ -19,4 +19,5 @@ public class ChoiceResponse {
     private Integer displayOrder;
     private Boolean requiresConfirmation;
     private Boolean isAvailable;
+    private Integer healthDelta;
 }

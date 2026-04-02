@@ -55,9 +55,13 @@ public class GameService {
 
     @Transactional
     public GameStateResponse startOrResume(UUID adventureId, User user) {
-        Optional<SaveGame> existing = saveGameRepository.findByUserIdAndAdventureId(user.getId(), adventureId);
+        List<SaveGame> existingSaves = saveGameRepository.findByUserIdAndAdventureIdOrderByLastPlayedDesc(user.getId(), adventureId);
+        
+        Optional<SaveGame> existing = existingSaves.stream()
+                .filter(s -> !Boolean.TRUE.equals(s.getCompleted()))
+                .findFirst();
 
-        if (existing.isPresent() && !Boolean.TRUE.equals(existing.get().getCompleted())) {
+        if (existing.isPresent()) {
             return buildGameState(existing.get());
         }
 
@@ -77,6 +81,7 @@ public class GameService {
                 .user(user)
                 .adventure(adventure)
                 .currentChapter(startChapter)
+                .playerName(user.getUsername() != null ? user.getUsername() : user.getEmail())
                 .health(100)
                 .maxHealth(100)
                 .stats("{}")
@@ -98,6 +103,69 @@ public class GameService {
         // Apply chapter effects
         applyChapterEffects(save, startChapter);
 
+        return buildGameState(save);
+    }
+
+    @Transactional
+    public GameStateResponse restart(UUID adventureId, User user) {
+        List<SaveGame> existingSaves = saveGameRepository.findByUserIdAndAdventureIdOrderByLastPlayedDesc(user.getId(), adventureId);
+        for (SaveGame save : existingSaves) {
+            // Delete history and inventory
+            historyRepository.deleteBySaveGameIdAndStepOrderGreaterThan(save.getId(), -1);
+            inventoryItemRepository.findBySaveGameId(save.getId())
+                    .forEach(inventoryItemRepository::delete);
+            saveGameRepository.delete(save);
+        }
+        return startOrResume(adventureId, user);
+    }
+
+    @Transactional
+    public GameStateResponse updateCombatResult(UUID saveGameId, int newHealth, User user) {
+        SaveGame save = saveGameRepository.findById(saveGameId)
+                .orElseThrow(() -> new RuntimeException("Save game not found"));
+        if (!save.getUser().getId().equals(user.getId())) {
+            throw new RuntimeException("Not your save game");
+        }
+        save.setHealth(Math.max(0, Math.min(newHealth, save.getMaxHealth())));
+        save.setLastPlayed(LocalDateTime.now());
+
+        // If player died, mark as completed
+        if (save.getHealth() <= 0) {
+            save.setCompleted(true);
+        } else {
+            // Victory transition: move to the next chapter via the first choice
+            List<Choice> choices = choiceRepository.findByFromChapterId(save.getCurrentChapter().getId());
+            if (!choices.isEmpty()) {
+                Choice victoryChoice = choices.get(0);
+                Chapter nextChapter = victoryChoice.getToChapter();
+                save.setCurrentChapter(nextChapter);
+
+                // Record history
+                long stepCount = historyRepository.countBySaveGameId(save.getId());
+                DecisionHistory entry = DecisionHistory.builder()
+                        .saveGame(save)
+                        .chapter(nextChapter)
+                        .choice(victoryChoice)
+                        .stepOrder((int) stepCount)
+                        .decidedAt(LocalDateTime.now())
+                        .build();
+                historyRepository.save(entry);
+
+                // Apply chapter effects
+                applyChapterEffects(save, nextChapter);
+
+                // Check if ending
+                if (Boolean.TRUE.equals(nextChapter.getIsEnding())) {
+                    save.setCompleted(true);
+                    statsRepository.findById(save.getAdventure().getId()).ifPresent(s -> {
+                        s.setTotalCompletions(s.getTotalCompletions() + 1);
+                        statsRepository.save(s);
+                    });
+                }
+            }
+        }
+
+        save = saveGameRepository.save(save);
         return buildGameState(save);
     }
 
@@ -343,14 +411,23 @@ public class GameService {
 
         List<ChoiceResponse> availableChoices = choices.stream()
                 .sorted(Comparator.comparing(c -> c.getDisplayOrder() != null ? c.getDisplayOrder() : 0))
-                .map(c -> ChoiceResponse.builder()
+                .map(c -> {
+                    // Compute healthDelta from effects
+                    List<Effect> effects = effectRepository.findByChoiceId(c.getId());
+                    Integer healthDelta = effects.stream()
+                            .filter(e -> e.getType() == com.cyoa.api.entity.enums.EffectType.MODIFY_STAT && "health".equals(e.getTargetKey()))
+                            .map(e -> { try { return Integer.parseInt(e.getValue()); } catch (Exception ex) { return 0; } })
+                            .reduce(0, Integer::sum);
+                    return ChoiceResponse.builder()
                         .id(c.getId())
                         .label(c.getLabel())
                         .toChapterId(c.getToChapter().getId())
                         .displayOrder(c.getDisplayOrder())
                         .requiresConfirmation(c.getRequiresConfirmation())
                         .isAvailable(evaluateConditions(save, c))
-                        .build())
+                        .healthDelta(healthDelta != 0 ? healthDelta : null)
+                        .build();
+                })
                 .collect(Collectors.toList());
 
         ChapterResponse chapterResp = ChapterResponse.builder()
@@ -361,6 +438,9 @@ public class GameService {
                 .isStart(current.getIsStart())
                 .isEnding(current.getIsEnding())
                 .endingType(current.getEndingType() != null ? current.getEndingType().name() : null)
+                .isCombat(current.getIsCombat())
+                .combatEnemyName(current.getCombatEnemyName())
+                .combatEnemyHealth(current.getCombatEnemyHealth())
                 .build();
 
         List<InventoryItem> invItems = inventoryItemRepository.findBySaveGameId(save.getId());

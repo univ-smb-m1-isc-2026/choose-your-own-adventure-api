@@ -110,8 +110,8 @@ class GameServiceTest {
 
     @Test
     void startOrResume_shouldCreateNewSave() {
-        when(saveGameRepository.findByUserIdAndAdventureId(player.getId(), adventure.getId()))
-                .thenReturn(Optional.empty());
+        when(saveGameRepository.findByUserIdAndAdventureIdOrderByLastPlayedDesc(player.getId(), adventure.getId()))
+                .thenReturn(Collections.emptyList());
         when(adventureRepository.findById(adventure.getId())).thenReturn(Optional.of(adventure));
         when(chapterRepository.findByAdventureIdAndIsStartTrue(adventure.getId()))
                 .thenReturn(Optional.of(startChapter));
@@ -134,8 +134,8 @@ class GameServiceTest {
 
     @Test
     void startOrResume_shouldResumeExisting() {
-        when(saveGameRepository.findByUserIdAndAdventureId(player.getId(), adventure.getId()))
-                .thenReturn(Optional.of(saveGame));
+        when(saveGameRepository.findByUserIdAndAdventureIdOrderByLastPlayedDesc(player.getId(), adventure.getId()))
+                .thenReturn(List.of(saveGame));
         when(choiceRepository.findByFromChapterId(any())).thenReturn(List.of(choice));
         when(conditionRepository.findByChoiceId(any())).thenReturn(Collections.emptyList());
         when(inventoryItemRepository.findBySaveGameId(any())).thenReturn(Collections.emptyList());

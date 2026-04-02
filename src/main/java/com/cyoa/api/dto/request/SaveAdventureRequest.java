@@ -28,6 +28,8 @@ public class SaveAdventureRequest {
         private Boolean isEnding;
         private Integer positionX;
         private Integer positionY;
+        private String combatEnemyName;
+        private Integer combatEnemyHealth;
     }
 
     @Data
@@ -35,5 +37,7 @@ public class SaveAdventureRequest {
         private String sourceId;
         private String targetId;
         private String label;
+        private Integer healthDelta;
+        private Boolean requiresConfirmation;
     }
 }

@@ -28,19 +28,22 @@ public class AdventureService {
     private final TagRepository tagRepository;
     private final AdventureStatsRepository statsRepository;
     private final FavoriteRepository favoriteRepository;
+    private final EffectRepository effectRepository;
 
     public AdventureService(AdventureRepository adventureRepository,
                             ChapterRepository chapterRepository,
                             ChoiceRepository choiceRepository,
                             TagRepository tagRepository,
                             AdventureStatsRepository statsRepository,
-                            FavoriteRepository favoriteRepository) {
+                            FavoriteRepository favoriteRepository,
+                            EffectRepository effectRepository) {
         this.adventureRepository = adventureRepository;
         this.chapterRepository = chapterRepository;
         this.choiceRepository = choiceRepository;
         this.tagRepository = tagRepository;
         this.statsRepository = statsRepository;
         this.favoriteRepository = favoriteRepository;
+        this.effectRepository = effectRepository;
     }
 
     public List<AdventureSummaryResponse> getCatalogue(String search, String tag, Difficulty difficulty, String language, String sort, UUID currentUserId) {
@@ -181,6 +184,10 @@ public class AdventureService {
         // Delete existing chapters and choices
         List<Chapter> oldChapters = chapterRepository.findByAdventureId(adventure.getId());
         for (Chapter ch : oldChapters) {
+            for (Choice c : ch.getChoices()) {
+                effectRepository.deleteAll(effectRepository.findByChoiceId(c.getId()));
+            }
+            effectRepository.deleteAll(effectRepository.findByChapterId(ch.getId()));
             choiceRepository.deleteAll(ch.getChoices());
         }
         chapterRepository.deleteAll(oldChapters);
@@ -191,6 +198,7 @@ public class AdventureService {
             for (SaveAdventureRequest.SaveChapterRequest chReq : request.getChapters()) {
                 boolean isStart = "start".equals(chReq.getType());
                 boolean isEnding = Boolean.TRUE.equals(chReq.getIsEnding()) || "ending".equals(chReq.getType());
+                boolean isCombat = "combat".equals(chReq.getType());
                 Chapter chapter = Chapter.builder()
                         .adventure(adventure)
                         .title(chReq.getTitle())
@@ -199,6 +207,9 @@ public class AdventureService {
                         .isStart(isStart)
                         .isEnding(isEnding)
                         .endingType(isEnding ? EndingType.NEUTRAL : null)
+                        .isCombat(isCombat)
+                        .combatEnemyName(isCombat ? chReq.getCombatEnemyName() : null)
+                        .combatEnemyHealth(isCombat ? chReq.getCombatEnemyHealth() : null)
                         .positionX(chReq.getPositionX())
                         .positionY(chReq.getPositionY())
                         .build();
@@ -208,7 +219,7 @@ public class AdventureService {
             }
         }
 
-        // Create edges as choices
+        // Create edges as choices + health effects
         if (request.getEdges() != null) {
             int order = 0;
             for (SaveAdventureRequest.SaveEdgeRequest edgeReq : request.getEdges()) {
@@ -220,9 +231,20 @@ public class AdventureService {
                             .toChapter(to)
                             .label(edgeReq.getLabel() != null ? edgeReq.getLabel() : "Continuer")
                             .displayOrder(order++)
-                            .requiresConfirmation(false)
+                            .requiresConfirmation(Boolean.TRUE.equals(edgeReq.getRequiresConfirmation()))
                             .build();
-                    choiceRepository.save(choice);
+                    choice = choiceRepository.save(choice);
+
+                    // Create health effect if healthDelta is set
+                    if (edgeReq.getHealthDelta() != null && edgeReq.getHealthDelta() != 0) {
+                        Effect effect = Effect.builder()
+                                .choice(choice)
+                                .type(com.cyoa.api.entity.enums.EffectType.MODIFY_STAT)
+                                .targetKey("health")
+                                .value(String.valueOf(edgeReq.getHealthDelta()))
+                                .build();
+                        effectRepository.save(effect);
+                    }
                 }
             }
         }
@@ -339,7 +361,14 @@ public class AdventureService {
 
     private ChapterResponse toChapterResponse(Chapter c) {
         List<ChoiceResponse> choices = c.getChoices().stream()
-                .map(ch -> ChoiceResponse.builder()
+                .map(ch -> {
+                    // Compute healthDelta from effects
+                    List<Effect> effects = effectRepository.findByChoiceId(ch.getId());
+                    Integer healthDelta = effects.stream()
+                            .filter(e -> e.getType() == com.cyoa.api.entity.enums.EffectType.MODIFY_STAT && "health".equals(e.getTargetKey()))
+                            .map(e -> { try { return Integer.parseInt(e.getValue()); } catch (Exception ex) { return 0; } })
+                            .reduce(0, Integer::sum);
+                    return ChoiceResponse.builder()
                         .id(ch.getId())
                         .label(ch.getLabel())
                         .toChapterId(ch.getToChapter().getId())
@@ -347,7 +376,9 @@ public class AdventureService {
                         .displayOrder(ch.getDisplayOrder())
                         .requiresConfirmation(ch.getRequiresConfirmation())
                         .isAvailable(true)
-                        .build())
+                        .healthDelta(healthDelta != 0 ? healthDelta : null)
+                        .build();
+                })
                 .collect(Collectors.toList());
 
         return ChapterResponse.builder()
@@ -358,6 +389,9 @@ public class AdventureService {
                 .isStart(c.getIsStart())
                 .isEnding(c.getIsEnding())
                 .endingType(c.getEndingType() != null ? c.getEndingType().name() : null)
+                .isCombat(c.getIsCombat())
+                .combatEnemyName(c.getCombatEnemyName())
+                .combatEnemyHealth(c.getCombatEnemyHealth())
                 .positionX(c.getPositionX())
                 .positionY(c.getPositionY())
                 .choices(choices)

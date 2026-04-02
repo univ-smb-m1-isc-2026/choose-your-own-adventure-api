@@ -11,6 +11,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @RestController
@@ -30,12 +31,28 @@ public class GameController {
         return ResponseEntity.ok(gameService.startOrResume(adventureId, principal.getUser()));
     }
 
+    @PostMapping("/restart/{adventureId}")
+    public ResponseEntity<GameStateResponse> restart(
+            @PathVariable UUID adventureId,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        return ResponseEntity.ok(gameService.restart(adventureId, principal.getUser()));
+    }
+
     @PostMapping("/{saveGameId}/choice")
     public ResponseEntity<GameStateResponse> makeChoice(
             @PathVariable UUID saveGameId,
             @Valid @RequestBody MakeChoiceRequest request,
             @AuthenticationPrincipal UserPrincipal principal) {
         return ResponseEntity.ok(gameService.makeChoice(saveGameId, request.getChoiceId(), principal.getUser()));
+    }
+
+    @PostMapping("/{saveGameId}/combat-result")
+    public ResponseEntity<GameStateResponse> updateCombatResult(
+            @PathVariable UUID saveGameId,
+            @RequestBody Map<String, Integer> body,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        int newHealth = body.getOrDefault("newHealth", 0);
+        return ResponseEntity.ok(gameService.updateCombatResult(saveGameId, newHealth, principal.getUser()));
     }
 
     @GetMapping("/{saveGameId}")

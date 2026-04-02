@@ -2,6 +2,8 @@ package com.cyoa.api.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -28,9 +30,14 @@ public class SaveGame {
     @JoinColumn(name = "current_chapter_id")
     private Chapter currentChapter;
 
+    @Column(name = "player_name", nullable = false)
+    private String playerName;
+
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")
     private String stats;
 
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")
     private String flags;
 

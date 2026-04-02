@@ -2,6 +2,8 @@ package com.cyoa.api.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import java.util.UUID;
 
 @Entity
@@ -28,6 +30,7 @@ public class Item {
     @Column(name = "image_url")
     private String imageUrl;
 
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")
     private String properties;
 }

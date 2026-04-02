@@ -22,5 +22,8 @@ public class ChapterResponse {
     private String endingType;
     private Integer positionX;
     private Integer positionY;
+    private Boolean isCombat;
+    private String combatEnemyName;
+    private Integer combatEnemyHealth;
     private List<ChoiceResponse> choices;
 }

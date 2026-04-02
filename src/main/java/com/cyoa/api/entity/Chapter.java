@@ -46,6 +46,15 @@ public class Chapter {
     @Column(name = "position_y")
     private Integer positionY;
 
+    @Column(name = "is_combat")
+    private Boolean isCombat;
+
+    @Column(name = "combat_enemy_name")
+    private String combatEnemyName;
+
+    @Column(name = "combat_enemy_health")
+    private Integer combatEnemyHealth;
+
     @OneToMany(mappedBy = "fromChapter", cascade = CascadeType.ALL, orphanRemoval = true)
     @Builder.Default
     private List<Choice> choices = new ArrayList<>();
