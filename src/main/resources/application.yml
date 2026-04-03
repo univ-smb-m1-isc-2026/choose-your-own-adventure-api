@@ -21,7 +21,3 @@ app:
   jwt-expiration-milliseconds: ${JWT_EXPIRATION_TIME:604800000}
   cors:
     allowed-origins: ${ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173,http://localhost:5001,https://cyoa.oups.net,https://cyoa-api.oups.net,https://cyoa.slackverse.pp.ua}
-
-logging:
-  file:
-    name: /logs/cyoa-api.log
