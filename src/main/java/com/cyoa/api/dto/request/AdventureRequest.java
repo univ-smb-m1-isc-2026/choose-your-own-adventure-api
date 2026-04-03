@@ -16,4 +16,5 @@ public class AdventureRequest {
     private Integer estimatedDurationMinutes;
     private Boolean allowBacktrack;
     private List<String> tags;
+    private String imageUrl;
 }

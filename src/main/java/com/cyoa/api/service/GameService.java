@@ -416,8 +416,8 @@ public class GameService {
                     List<Effect> effects = effectRepository.findByChoiceId(c.getId());
                     Integer healthDelta = effects.stream()
                             .filter(e -> e.getType() == com.cyoa.api.entity.enums.EffectType.MODIFY_STAT && "health".equals(e.getTargetKey()))
-                            .map(e -> { try { return Integer.parseInt(e.getValue()); } catch (Exception ex) { return 0; } })
-                            .reduce(0, Integer::sum);
+                            .mapToInt(e -> { try { return Integer.parseInt(e.getValue()); } catch (Exception ex) { return 0; } })
+                            .sum();
                     return ChoiceResponse.builder()
                         .id(c.getId())
                         .label(c.getLabel())

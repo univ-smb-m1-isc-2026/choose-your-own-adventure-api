@@ -11,10 +11,17 @@ import com.cyoa.api.entity.enums.EndingType;
 import com.cyoa.api.repository.AdventureRepository;
 import com.cyoa.api.repository.ChapterRepository;
 import com.cyoa.api.repository.ChoiceRepository;
+import com.cyoa.api.repository.ConditionRepository;
+import com.cyoa.api.repository.DecisionHistoryRepository;
+import com.cyoa.api.repository.EffectRepository;
+import com.cyoa.api.repository.InventoryItemRepository;
+import com.cyoa.api.repository.SaveGameRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -24,13 +31,28 @@ public class ChapterService {
     private final ChapterRepository chapterRepository;
     private final AdventureRepository adventureRepository;
     private final ChoiceRepository choiceRepository;
+    private final ConditionRepository conditionRepository;
+    private final EffectRepository effectRepository;
+    private final SaveGameRepository saveGameRepository;
+    private final DecisionHistoryRepository historyRepository;
+    private final InventoryItemRepository inventoryItemRepository;
 
     public ChapterService(ChapterRepository chapterRepository,
                           AdventureRepository adventureRepository,
-                          ChoiceRepository choiceRepository) {
+                          ChoiceRepository choiceRepository,
+                          ConditionRepository conditionRepository,
+                          EffectRepository effectRepository,
+                          SaveGameRepository saveGameRepository,
+                          DecisionHistoryRepository historyRepository,
+                          InventoryItemRepository inventoryItemRepository) {
         this.chapterRepository = chapterRepository;
         this.adventureRepository = adventureRepository;
         this.choiceRepository = choiceRepository;
+        this.conditionRepository = conditionRepository;
+        this.effectRepository = effectRepository;
+        this.saveGameRepository = saveGameRepository;
+        this.historyRepository = historyRepository;
+        this.inventoryItemRepository = inventoryItemRepository;
     }
 
     public List<ChapterResponse> getByAdventure(UUID adventureId) {
@@ -108,7 +130,33 @@ public class ChapterService {
         if (!chapter.getAdventure().getAuthor().getId().equals(authorId)) {
             throw new RuntimeException("Not the author");
         }
+        deleteAdventureProgress(chapter.getAdventure().getId());
+        deleteChoicesReferencingChapter(chapter.getId());
+        conditionRepository.deleteByChapterId(chapter.getId());
+        effectRepository.deleteByChapterId(chapter.getId());
         chapterRepository.delete(chapter);
+    }
+
+    private void deleteAdventureProgress(UUID adventureId) {
+        saveGameRepository.findByAdventureId(adventureId).forEach(save -> {
+            historyRepository.deleteBySaveGameId(save.getId());
+            inventoryItemRepository.deleteBySaveGameId(save.getId());
+        });
+        saveGameRepository.deleteByAdventureId(adventureId);
+    }
+
+    private void deleteChoicesReferencingChapter(UUID chapterId) {
+        Set<UUID> choiceIds = new LinkedHashSet<>();
+        choiceRepository.findByFromChapterId(chapterId).forEach(choice -> choiceIds.add(choice.getId()));
+        choiceRepository.findByToChapterId(chapterId).forEach(choice -> choiceIds.add(choice.getId()));
+
+        for (UUID choiceId : choiceIds) {
+            conditionRepository.deleteByChoiceId(choiceId);
+            effectRepository.deleteByChoiceId(choiceId);
+        }
+
+        choiceRepository.deleteByFromChapterId(chapterId);
+        choiceRepository.deleteByToChapterId(chapterId);
     }
 
     private void createChoice(Chapter from, ChoiceRequest cr) {

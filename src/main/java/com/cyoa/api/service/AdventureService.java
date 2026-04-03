@@ -29,6 +29,11 @@ public class AdventureService {
     private final AdventureStatsRepository statsRepository;
     private final FavoriteRepository favoriteRepository;
     private final EffectRepository effectRepository;
+    private final ConditionRepository conditionRepository;
+    private final SaveGameRepository saveGameRepository;
+    private final DecisionHistoryRepository historyRepository;
+    private final InventoryItemRepository inventoryItemRepository;
+    private final ItemRepository itemRepository;
 
     public AdventureService(AdventureRepository adventureRepository,
                             ChapterRepository chapterRepository,
@@ -36,7 +41,12 @@ public class AdventureService {
                             TagRepository tagRepository,
                             AdventureStatsRepository statsRepository,
                             FavoriteRepository favoriteRepository,
-                            EffectRepository effectRepository) {
+                            EffectRepository effectRepository,
+                            ConditionRepository conditionRepository,
+                            SaveGameRepository saveGameRepository,
+                            DecisionHistoryRepository historyRepository,
+                            InventoryItemRepository inventoryItemRepository,
+                            ItemRepository itemRepository) {
         this.adventureRepository = adventureRepository;
         this.chapterRepository = chapterRepository;
         this.choiceRepository = choiceRepository;
@@ -44,6 +54,11 @@ public class AdventureService {
         this.statsRepository = statsRepository;
         this.favoriteRepository = favoriteRepository;
         this.effectRepository = effectRepository;
+        this.conditionRepository = conditionRepository;
+        this.saveGameRepository = saveGameRepository;
+        this.historyRepository = historyRepository;
+        this.inventoryItemRepository = inventoryItemRepository;
+        this.itemRepository = itemRepository;
     }
 
     public List<AdventureSummaryResponse> getCatalogue(String search, String tag, Difficulty difficulty, String language, String sort, UUID currentUserId) {
@@ -113,6 +128,7 @@ public class AdventureService {
                 .difficulty(request.getDifficulty())
                 .estimatedDurationMinutes(request.getEstimatedDurationMinutes())
                 .allowBacktrack(request.getAllowBacktrack() != null ? request.getAllowBacktrack() : true)
+                .imageUrl(request.getImageUrl())
                 .status(AdventureStatus.DRAFT)
                 .build();
 
@@ -141,6 +157,7 @@ public class AdventureService {
         if (request.getAllowBacktrack() != null) {
             adventure.setAllowBacktrack(request.getAllowBacktrack());
         }
+        adventure.setImageUrl(request.getImageUrl());
 
         adventure = adventureRepository.save(adventure);
         saveTags(adventure, request.getTags());
@@ -150,19 +167,25 @@ public class AdventureService {
 
     @Transactional
     public AdventureResponse saveComplete(UUID adventureId, SaveAdventureRequest request, User author) {
-        Adventure adventure;
+        Adventure adventure = null;
         if (adventureId != null) {
-            adventure = adventureRepository.findById(adventureId)
-                    .orElseThrow(() -> new RuntimeException("Adventure not found"));
-            if (!adventure.getAuthor().getId().equals(author.getId())) {
-                throw new RuntimeException("Not the author");
+            adventure = adventureRepository.findById(adventureId).orElse(null);
+            
+            // If ID was provided but not found, or belongs to another author, we start fresh
+            if (adventure != null && !adventure.getAuthor().getId().equals(author.getId())) {
+                throw new RuntimeException("Permission denied: You are not the author of this adventure");
             }
-        } else {
+        }
+        
+        if (adventure == null) {
             adventure = Adventure.builder()
                     .author(author)
                     .status(AdventureStatus.DRAFT)
                     .allowBacktrack(request.getAllowBacktrack() != null ? request.getAllowBacktrack() : true)
                     .build();
+            // We do NOT manually set the ID here anymore. 
+            // If the provided adventureId was not found, we let JPA generate a new one.
+            // This ensures a proper INSERT happens, avoiding FK violations in chapters.
         }
 
         adventure.setTitle(request.getTitle());
@@ -173,24 +196,42 @@ public class AdventureService {
         }
         adventure.setEstimatedDurationMinutes(request.getEstimatedDurationMinutes());
         if (request.getAllowBacktrack() != null) adventure.setAllowBacktrack(request.getAllowBacktrack());
-        adventure = adventureRepository.save(adventure);
+        adventure.setImageUrl(request.getImageUrl());
+        
+        if (request.getStatus() != null) {
+            try {
+                AdventureStatus newStatus = AdventureStatus.valueOf(request.getStatus().toUpperCase());
+                if (newStatus == AdventureStatus.PUBLISHED && adventure.getStatus() != AdventureStatus.PUBLISHED) {
+                    adventure.setPublishedAt(LocalDateTime.now());
+                }
+                adventure.setStatus(newStatus);
+            } catch (Exception ignored) {}
+        }
 
-        if (!statsRepository.existsById(adventure.getId())) {
+        adventure = adventureRepository.saveAndFlush(adventure);
+        UUID actualId = adventure.getId();
+
+        if (!statsRepository.existsById(actualId)) {
             statsRepository.save(AdventureStats.builder().adventure(adventure).build());
         }
 
-        saveTags(adventure, request.getTags());
+        // Deletions that clear the session (due to clearAutomatically = true in repositories)
+        tagRepository.deleteByAdventureId(actualId);
+        deleteAdventureProgress(actualId);
+        deleteAdventureStory(actualId);
 
-        // Delete existing chapters and choices
-        List<Chapter> oldChapters = chapterRepository.findByAdventureId(adventure.getId());
-        for (Chapter ch : oldChapters) {
-            for (Choice c : ch.getChoices()) {
-                effectRepository.deleteAll(effectRepository.findByChoiceId(c.getId()));
+        // Re-fetch adventure to ensure it's managed and associations are accessible
+        adventure = adventureRepository.findById(actualId)
+                .orElseThrow(() -> new RuntimeException("Adventure not found after cleanup: " + actualId));
+
+        // Create new tags
+        if (request.getTags() != null) {
+            for (String name : request.getTags()) {
+                if (name != null && !name.isBlank()) {
+                    tagRepository.save(Tag.builder().adventure(adventure).name(name.trim()).build());
+                }
             }
-            effectRepository.deleteAll(effectRepository.findByChapterId(ch.getId()));
-            choiceRepository.deleteAll(ch.getChoices());
         }
-        chapterRepository.deleteAll(oldChapters);
 
         // Create new chapters
         Map<String, Chapter> tempIdToChapter = new HashMap<>();
@@ -255,9 +296,9 @@ public class AdventureService {
     @Transactional
     public AdventureResponse publish(UUID id, UUID authorId) {
         Adventure adventure = adventureRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Adventure not found"));
+                .orElseThrow(() -> new RuntimeException("Adventure with ID " + id + " not found"));
         if (!adventure.getAuthor().getId().equals(authorId)) {
-            throw new RuntimeException("Not the author");
+            throw new RuntimeException("Permission denied: You are not the author of this adventure");
         }
         adventure.setStatus(AdventureStatus.PUBLISHED);
         adventure.setPublishedAt(LocalDateTime.now());
@@ -268,17 +309,16 @@ public class AdventureService {
     @Transactional
     public void delete(UUID id, UUID authorId) {
         Adventure adventure = adventureRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Adventure not found"));
+                .orElseThrow(() -> new RuntimeException("Adventure with ID " + id + " not found"));
         if (!adventure.getAuthor().getId().equals(authorId)) {
-            throw new RuntimeException("Not the author");
+            throw new RuntimeException("Permission denied: You cannot delete an adventure you didn't create");
         }
+        deleteAdventureProgress(id);
+        deleteAdventureStory(id);
+        favoriteRepository.deleteByIdAdventureId(id);
         tagRepository.deleteByAdventureId(id);
-        List<Chapter> chapters = chapterRepository.findByAdventureId(id);
-        for (Chapter ch : chapters) {
-            choiceRepository.deleteAll(ch.getChoices());
-        }
-        chapterRepository.deleteAll(chapters);
-        statsRepository.deleteById(id);
+        itemRepository.deleteByAdventureId(id);
+        statsRepository.deleteByAdventureId(id);
         adventureRepository.delete(adventure);
     }
 
@@ -292,11 +332,34 @@ public class AdventureService {
         if (tagNames != null) {
             for (String name : tagNames) {
                 if (name != null && !name.isBlank()) {
-                    Tag tag = Tag.builder().adventure(adventure).name(name.trim()).build();
-                    tagRepository.save(tag);
+                    tagRepository.save(Tag.builder().adventure(adventure).name(name.trim()).build());
                 }
             }
         }
+    }
+
+    private void deleteAdventureProgress(UUID adventureId) {
+        List<SaveGame> saves = saveGameRepository.findByAdventureId(adventureId);
+        for (SaveGame save : saves) {
+            historyRepository.deleteBySaveGameId(save.getId());
+            inventoryItemRepository.deleteBySaveGameId(save.getId());
+        }
+        saveGameRepository.deleteByAdventureId(adventureId);
+    }
+
+    private void deleteAdventureStory(UUID adventureId) {
+        List<Chapter> chapters = chapterRepository.findByAdventureId(adventureId);
+        for (Chapter chapter : chapters) {
+            List<Choice> choices = choiceRepository.findByFromChapterId(chapter.getId());
+            for (Choice choice : choices) {
+                conditionRepository.deleteByChoiceId(choice.getId());
+                effectRepository.deleteByChoiceId(choice.getId());
+            }
+            conditionRepository.deleteByChapterId(chapter.getId());
+            effectRepository.deleteByChapterId(chapter.getId());
+            choiceRepository.deleteByFromChapterId(chapter.getId());
+        }
+        chapterRepository.deleteByAdventureId(adventureId);
     }
 
     private AdventureSummaryResponse toSummary(Adventure a, UUID currentUserId) {
@@ -318,6 +381,7 @@ public class AdventureService {
                 .totalReads(totalReads)
                 .publishedAt(a.getPublishedAt())
                 .isFavorited(fav)
+                .imageUrl(a.getImageUrl())
                 .build();
     }
 
@@ -356,6 +420,7 @@ public class AdventureService {
                 .chapterCount(chapters.size())
                 .stats(statsResp)
                 .isFavorited(fav)
+                .imageUrl(a.getImageUrl())
                 .build();
     }
 
@@ -366,8 +431,8 @@ public class AdventureService {
                     List<Effect> effects = effectRepository.findByChoiceId(ch.getId());
                     Integer healthDelta = effects.stream()
                             .filter(e -> e.getType() == com.cyoa.api.entity.enums.EffectType.MODIFY_STAT && "health".equals(e.getTargetKey()))
-                            .map(e -> { try { return Integer.parseInt(e.getValue()); } catch (Exception ex) { return 0; } })
-                            .reduce(0, Integer::sum);
+                            .mapToInt(e -> { try { return Integer.parseInt(e.getValue()); } catch (Exception ex) { return 0; } })
+                            .sum();
                     return ChoiceResponse.builder()
                         .id(ch.getId())
                         .label(ch.getLabel())

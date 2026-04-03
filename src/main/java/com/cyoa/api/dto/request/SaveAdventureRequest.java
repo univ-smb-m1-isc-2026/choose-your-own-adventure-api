@@ -16,6 +16,8 @@ public class SaveAdventureRequest {
     private List<String> tags;
     private List<SaveChapterRequest> chapters;
     private List<SaveEdgeRequest> edges;
+    private String status;
+    private String imageUrl;
 
     @Data
     public static class SaveChapterRequest {

@@ -32,4 +32,5 @@ public class AdventureResponse {
     private Integer chapterCount;
     private AdventureStatsResponse stats;
     private Boolean isFavorited;
+    private String imageUrl;
 }

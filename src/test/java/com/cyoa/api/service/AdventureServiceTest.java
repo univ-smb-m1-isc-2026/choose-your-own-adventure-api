@@ -1,6 +1,7 @@
 package com.cyoa.api.service;
 
 import com.cyoa.api.dto.request.AdventureRequest;
+import com.cyoa.api.dto.request.SaveAdventureRequest;
 import com.cyoa.api.dto.response.AdventureResponse;
 import com.cyoa.api.dto.response.AdventureSummaryResponse;
 import com.cyoa.api.entity.*;
@@ -11,6 +12,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -30,6 +32,12 @@ class AdventureServiceTest {
     @Mock private TagRepository tagRepository;
     @Mock private AdventureStatsRepository statsRepository;
     @Mock private FavoriteRepository favoriteRepository;
+    @Mock private EffectRepository effectRepository;
+    @Mock private ConditionRepository conditionRepository;
+    @Mock private SaveGameRepository saveGameRepository;
+    @Mock private DecisionHistoryRepository historyRepository;
+    @Mock private InventoryItemRepository inventoryItemRepository;
+    @Mock private ItemRepository itemRepository;
 
     @InjectMocks
     private AdventureService adventureService;
@@ -171,13 +179,106 @@ class AdventureServiceTest {
     }
 
     @Test
-    void delete_shouldRemoveAdventure() {
+    void delete_shouldRemoveAdventureAndDependentDataInOrder() {
+        Chapter chapter = Chapter.builder()
+                .id(UUID.randomUUID())
+                .adventure(adventure)
+                .build();
+        Choice choice = Choice.builder()
+                .id(UUID.randomUUID())
+                .fromChapter(chapter)
+                .build();
+        SaveGame save = SaveGame.builder()
+                .id(UUID.randomUUID())
+                .adventure(adventure)
+                .build();
+
         when(adventureRepository.findById(adventure.getId())).thenReturn(Optional.of(adventure));
-        when(chapterRepository.findByAdventureId(any())).thenReturn(Collections.emptyList());
+        when(saveGameRepository.findByAdventureId(adventure.getId())).thenReturn(List.of(save));
+        when(chapterRepository.findByAdventureId(adventure.getId())).thenReturn(List.of(chapter));
+        when(choiceRepository.findByFromChapterId(chapter.getId())).thenReturn(List.of(choice));
 
         adventureService.delete(adventure.getId(), author.getId());
 
+        InOrder inOrder = inOrder(
+                historyRepository,
+                inventoryItemRepository,
+                saveGameRepository,
+                conditionRepository,
+                effectRepository,
+                choiceRepository,
+                chapterRepository,
+                favoriteRepository,
+                tagRepository,
+                itemRepository,
+                statsRepository,
+                adventureRepository
+        );
+        inOrder.verify(historyRepository).deleteBySaveGameId(save.getId());
+        inOrder.verify(inventoryItemRepository).deleteBySaveGameId(save.getId());
+        inOrder.verify(saveGameRepository).deleteByAdventureId(adventure.getId());
+        inOrder.verify(conditionRepository).deleteByChoiceId(choice.getId());
+        inOrder.verify(effectRepository).deleteByChoiceId(choice.getId());
+        inOrder.verify(conditionRepository).deleteByChapterId(chapter.getId());
+        inOrder.verify(effectRepository).deleteByChapterId(chapter.getId());
+        inOrder.verify(choiceRepository).deleteByFromChapterId(chapter.getId());
+        inOrder.verify(chapterRepository).deleteByAdventureId(adventure.getId());
+        inOrder.verify(favoriteRepository).deleteByIdAdventureId(adventure.getId());
+        inOrder.verify(tagRepository).deleteByAdventureId(adventure.getId());
+        inOrder.verify(itemRepository).deleteByAdventureId(adventure.getId());
+        inOrder.verify(statsRepository).deleteByAdventureId(adventure.getId());
         verify(adventureRepository).delete(adventure);
+    }
+
+    @Test
+    void saveComplete_shouldClearSavesBeforeReplacingStoryGraph() {
+        Chapter chapter = Chapter.builder()
+                .id(UUID.randomUUID())
+                .adventure(adventure)
+                .build();
+        Choice choice = Choice.builder()
+                .id(UUID.randomUUID())
+                .fromChapter(chapter)
+                .build();
+        SaveGame save = SaveGame.builder()
+                .id(UUID.randomUUID())
+                .adventure(adventure)
+                .build();
+
+        SaveAdventureRequest request = new SaveAdventureRequest();
+        request.setTitle("Updated Adventure");
+        request.setSummary("Updated summary");
+        request.setLanguage("fr");
+        request.setDifficulty(Difficulty.EASY.name());
+        request.setAllowBacktrack(true);
+        request.setTags(Collections.emptyList());
+        request.setChapters(Collections.emptyList());
+        request.setEdges(Collections.emptyList());
+
+        when(adventureRepository.findById(adventure.getId())).thenReturn(Optional.of(adventure));
+        when(adventureRepository.save(any(Adventure.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(statsRepository.existsById(adventure.getId())).thenReturn(true);
+        when(saveGameRepository.findByAdventureId(adventure.getId())).thenReturn(List.of(save));
+        when(chapterRepository.findByAdventureId(adventure.getId()))
+                .thenReturn(List.of(chapter), Collections.emptyList());
+        when(choiceRepository.findByFromChapterId(chapter.getId())).thenReturn(List.of(choice));
+        when(tagRepository.findByAdventureId(adventure.getId())).thenReturn(Collections.emptyList());
+        when(statsRepository.findById(adventure.getId())).thenReturn(Optional.empty());
+
+        AdventureResponse result = adventureService.saveComplete(adventure.getId(), request, author);
+
+        assertEquals("Updated Adventure", result.getTitle());
+
+        InOrder inOrder = inOrder(
+                historyRepository,
+                inventoryItemRepository,
+                saveGameRepository,
+                choiceRepository
+        );
+        inOrder.verify(historyRepository).deleteBySaveGameId(save.getId());
+        inOrder.verify(inventoryItemRepository).deleteBySaveGameId(save.getId());
+        inOrder.verify(saveGameRepository).deleteByAdventureId(adventure.getId());
+        inOrder.verify(choiceRepository).deleteByFromChapterId(chapter.getId());
     }
 
     @Test

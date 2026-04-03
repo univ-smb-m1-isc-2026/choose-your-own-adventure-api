@@ -4,15 +4,23 @@ import com.cyoa.api.dto.request.ChapterRequest;
 import com.cyoa.api.dto.response.ChapterResponse;
 import com.cyoa.api.entity.Adventure;
 import com.cyoa.api.entity.Chapter;
+import com.cyoa.api.entity.Choice;
+import com.cyoa.api.entity.SaveGame;
 import com.cyoa.api.entity.User;
 import com.cyoa.api.entity.enums.AdventureStatus;
 import com.cyoa.api.repository.AdventureRepository;
 import com.cyoa.api.repository.ChapterRepository;
 import com.cyoa.api.repository.ChoiceRepository;
+import com.cyoa.api.repository.ConditionRepository;
+import com.cyoa.api.repository.DecisionHistoryRepository;
+import com.cyoa.api.repository.EffectRepository;
+import com.cyoa.api.repository.InventoryItemRepository;
+import com.cyoa.api.repository.SaveGameRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -28,6 +36,11 @@ class ChapterServiceTest {
     @Mock private ChapterRepository chapterRepository;
     @Mock private AdventureRepository adventureRepository;
     @Mock private ChoiceRepository choiceRepository;
+    @Mock private ConditionRepository conditionRepository;
+    @Mock private EffectRepository effectRepository;
+    @Mock private SaveGameRepository saveGameRepository;
+    @Mock private DecisionHistoryRepository historyRepository;
+    @Mock private InventoryItemRepository inventoryItemRepository;
 
     @InjectMocks
     private ChapterService chapterService;
@@ -136,11 +149,38 @@ class ChapterServiceTest {
     }
 
     @Test
-    void delete_shouldDeleteChapter() {
+    void delete_shouldDeleteChapterAfterClearingProgressAndChoices() {
+        Choice outgoing = Choice.builder().id(UUID.randomUUID()).fromChapter(chapter).build();
+        Choice incoming = Choice.builder().id(UUID.randomUUID()).toChapter(chapter).build();
+        SaveGame save = SaveGame.builder().id(UUID.randomUUID()).adventure(adventure).build();
+
         when(chapterRepository.findById(chapter.getId())).thenReturn(Optional.of(chapter));
+        when(saveGameRepository.findByAdventureId(adventure.getId())).thenReturn(List.of(save));
+        when(choiceRepository.findByFromChapterId(chapter.getId())).thenReturn(List.of(outgoing));
+        when(choiceRepository.findByToChapterId(chapter.getId())).thenReturn(List.of(incoming));
 
         chapterService.delete(chapter.getId(), author.getId());
 
+        InOrder inOrder = inOrder(
+                historyRepository,
+                inventoryItemRepository,
+                saveGameRepository,
+                conditionRepository,
+                effectRepository,
+                choiceRepository,
+                chapterRepository
+        );
+        inOrder.verify(historyRepository).deleteBySaveGameId(save.getId());
+        inOrder.verify(inventoryItemRepository).deleteBySaveGameId(save.getId());
+        inOrder.verify(saveGameRepository).deleteByAdventureId(adventure.getId());
+        inOrder.verify(conditionRepository).deleteByChoiceId(outgoing.getId());
+        inOrder.verify(effectRepository).deleteByChoiceId(outgoing.getId());
+        inOrder.verify(conditionRepository).deleteByChoiceId(incoming.getId());
+        inOrder.verify(effectRepository).deleteByChoiceId(incoming.getId());
+        inOrder.verify(choiceRepository).deleteByFromChapterId(chapter.getId());
+        inOrder.verify(choiceRepository).deleteByToChapterId(chapter.getId());
+        inOrder.verify(conditionRepository).deleteByChapterId(chapter.getId());
+        inOrder.verify(effectRepository).deleteByChapterId(chapter.getId());
         verify(chapterRepository).delete(chapter);
     }
 

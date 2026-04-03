@@ -28,4 +28,5 @@ public class AdventureSummaryResponse {
     private Integer totalReads;
     private LocalDateTime publishedAt;
     private Boolean isFavorited;
+    private String imageUrl;
 }
